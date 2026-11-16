@@ -1,18 +1,18 @@
-# Этап сборки: Maven + JDK 8 (в pom.xml указан java.version=8)
+# Сборка: Maven + JDK 8 (в pom.xml указан java.version=8)
 FROM maven:3.8-openjdk-8 AS build
 
 WORKDIR /app
 
-# Сначала копируем только pom.xml и mvnw — зависимости кэшируются в отдельном слое
+# Копирую только pom.xml и mvnw
 COPY pom.xml mvnw ./
 RUN chmod +x mvnw && ./mvnw dependency:go-offline -B
 
-# Затем копируем исходный код и собираем jar
+# Копирую исходный код и собираю jar
 COPY src ./src
 COPY wait-for-it.sh ./
 RUN ./mvnw package -DskipTests -B
 
-# Финальный (рантайм) образ — только JRE, чтобы сократить размер
+# Финальный образ — только JRE, чтобы сократить размер
 FROM openjdk:8-jre-alpine
 
 WORKDIR /app

@@ -1,4 +1,4 @@
-# Этап сборки: Maven + JDK 8 (в pom.xml указан java.version=8)
+# Этап сборки: 
 FROM maven:3.8-openjdk-8 AS build
 
 WORKDIR /app

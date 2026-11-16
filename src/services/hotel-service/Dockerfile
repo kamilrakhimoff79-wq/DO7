@@ -1,4 +1,4 @@
-# Этап сборки: Maven + JDK 8 (в pom.xml указан java.version=8)
+# Этап сборки
 FROM maven:3.8-openjdk-8 AS build
 
 WORKDIR /app
@@ -12,7 +12,7 @@ COPY src ./src
 COPY wait-for-it.sh ./
 RUN ./mvnw package -DskipTests -B
 
-# Финальный (рантайм) образ — только JRE, чтобы сократить размер
+# Финальный образ 
 FROM openjdk:8-jre-alpine
 
 WORKDIR /app
