@@ -1,0 +1,211 @@
+version: "3.8"
+
+# Инфраструктурные сервисы: база данных и очередь сообщений.
+services:
+
+  database:
+    image: postgres:13-alpine
+    container_name: s21_database
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+    volumes:
+      # init.sql создаёт все необходимые базы данных (users_db, hotels_db, ...)
+      - ./services/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"          # хостовый 5432 занят локальным PostgreSQL — берём 5433
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - back
+
+  message-queue:
+    image: rabbitmq:3-management-alpine
+    container_name: s21_message_queue
+    restart: always
+    ports:
+      - "6672:5672"          # хостовый 5672 свободен, но нумеруем зеркально к management
+      - "6673:15672"         # веб-консоль RabbitMQ (http://localhost:6673)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - back
+
+  # Микросервисы приложения. Хосты совпадают с именами сервисов —
+  # именно так Docker DNS разрешает имена внутри общей сети.
+
+  session-service:
+    build: ./services/session-service
+    container_name: s21_session_service
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: users_db
+    ports:
+      - "8081:8081"          # проброшен на localhost для доступа из локальной машины
+    networks:
+      - back
+
+  hotel-service:
+    build: ./services/hotel-service
+    container_name: s21_hotel_service
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: hotels_db
+    networks:
+      - back
+
+  payment-service:
+    build: ./services/payment-service
+    container_name: s21_payment_service
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: payments_db
+    networks:
+      - back
+
+  loyalty-service:
+    build: ./services/loyalty-service
+    container_name: s21_loyalty_service
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: balances_db
+    networks:
+      - back
+
+  report-service:
+    build: ./services/report-service
+    container_name: s21_report_service
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+      message-queue:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: statistics_db
+      RABBIT_MQ_HOST: message-queue
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: messagequeue
+      RABBIT_MQ_EXCHANGE: messagequeue-exchange
+    networks:
+      - back
+
+  booking-service:
+    build: ./services/booking-service
+    container_name: s21_booking_service
+    restart: always
+    depends_on:
+      database:
+        condition: service_healthy
+      message-queue:
+        condition: service_healthy
+      hotel-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      loyalty-service:
+        condition: service_started
+    environment:
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: reservations_db
+      RABBIT_MQ_HOST: message-queue
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: messagequeue
+      RABBIT_MQ_EXCHANGE: messagequeue-exchange
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+    networks:
+      - back
+
+  gateway-service:
+    build: ./services/gateway-service
+    container_name: s21_gateway_service
+    restart: always
+    depends_on:
+      session-service:
+        condition: service_started
+      hotel-service:
+        condition: service_started
+      booking-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      loyalty-service:
+        condition: service_started
+      report-service:
+        condition: service_started
+    environment:
+      SESSION_SERVICE_HOST: session-service
+      SESSION_SERVICE_PORT: 8081
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      BOOKING_SERVICE_HOST: booking-service
+      BOOKING_SERVICE_PORT: 8083
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+      REPORT_SERVICE_HOST: report-service
+      REPORT_SERVICE_PORT: 8086
+    ports:
+      - "8087:8087"          # проброшен на localhost для доступа из локальной машины
+    networks:
+      - back
+
+volumes:
+  pg_data:
+
+networks:
+  back:
+    driver: bridge
